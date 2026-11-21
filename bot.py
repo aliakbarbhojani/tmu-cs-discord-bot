@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import requests
 from datetime import date, timedelta
+import json
 
 def send_discord_message(webhook_url, title, content, url):
     post = {"embeds": [{"title": title, "description": content, "url": url, "color": 0x004C9B}]}
@@ -66,10 +67,10 @@ def reminders_due(key_dates, today):
         start = to_date(item["start"])
         end = to_date(item["end"])
 
-        if start == target:
+        if start is not None and today <= start <= target:
             reminders.append((item, "Starts"))
 
-        if end == target and end != start:
+        if end is not None and end != start and today <= end <= target:
             reminders.append((item, "Ends"))
 
     return reminders
@@ -80,21 +81,49 @@ def date_format(text):
         return "N/A"
     return d.strftime("%A, %B %d")
 
+def load_sent():
+    try:
+        with open(SENT_FILE, encoding="utf-8") as f:
+            return set(json.load(f))
+
+    except FileNotFoundError:
+        return set()
+
+def save_sent(sent):
+    with open(SENT_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(sent), f, indent=2)
+
+def reminder_key(item, action):
+    return f"{action}|{item['start']}|{item['end']}|{item['subject']}"
+
 load_dotenv()
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
 DATES_URL = "https://www.torontomu.ca/calendar/2026-2027/dates/"
 HEADERS = {"User-Agent": "TMU-CS-Discord-Bot (student project)"}
+SENT_FILE = "sent_reminders.json"
 
 dates = get_key_dates()
 #print(f"Found {len(dates)} key dates.")
 #print(dates[0])
 
-today = date(2026, 12, 17)
 
+today = date.today()
+sent = load_sent()
 reminders = reminders_due(dates, today)
+new_count = 0
 
 for item, action in reminders:
+    key = reminder_key(item, action)
+    if key in sent:
+        continue
+
     title = f"{action} Soon: {item['subject']}"
     content = f"{item['description']}\n\nStart: {date_format(item['start'])}\nEnd: {date_format(item['end'])}"
+    
     send_discord_message(WEBHOOK_URL, title, content, DATES_URL)
+
+    sent.add(key)
+    save_sent(sent)
+    new_count += 1
+
+print(f"{today}: {len(reminders)} due, {new_count} sent")
